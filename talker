@@ -1,0 +1,126 @@
+#!/usr/bin/env python
+
+import pyaudio
+from audioop import rms
+from threading import Timer
+
+from time import sleep
+
+FORMAT = pyaudio.paInt16
+SAMPLE_CHARS = 16 / 8
+CHANNELS = 2
+RATE = 44100  
+
+class Talker:
+    def __init__(self):
+        self.timer = None
+        self.calibrating = False
+        self.calibrate_upper = True
+        self.talking = False
+
+        self.pa = pyaudio.PyAudio()
+        self.stream = self.pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            stream_callback=self.process_stream
+        )
+        self.stream.start_stream()
+
+    @property
+    def calibrated(self):
+        try:
+            self.threshes
+        except ValueError:
+            return False
+        return True
+
+    @property
+    def threshes(self):
+        threshes = []
+        errs = False
+
+        try:
+            threshes.append(self.lower_thresh)
+        except AttributeError:
+            threshes.append(None)
+            errs = True
+
+        try:
+            threshes.append(self.upper_thresh)
+        except AttributeError:
+            threshes.append(None)
+            errs = True
+
+        if errs:
+            raise ValueError(
+                "Missing one or more thresholds. Current thresholds: %s"
+                % ', '.join(map(str, threshes))
+            )
+
+        return tuple(threshes)
+
+    def process_stream(self, in_data, frame_count, time_info, status):
+        amplitude = rms(in_data, SAMPLE_CHARS)
+
+        if self.calibrating:
+            if self.calibrate_upper:
+                self.upper_thresh = max(self.upper_thresh, amplitude)
+            else:
+                self.lower_thresh = max(self.lower_thresh, amplitude)
+
+        elif self.calibrated:
+            if amplitude > (sum(self.threshes)/2.0):
+                print "open"
+
+        return (None, pyaudio.paContinue)
+
+    def start_calibration(self, duration, is_upper):
+        if not self.calibrating:
+            self.calibrate_upper = is_upper
+            if is_upper:
+                self.upper_thresh = 0
+            else:
+                self.lower_thresh = 0
+            self.calibrating = True
+
+            self.timer = Timer(duration, self.stop_calibration)
+            self.timer.start()
+        else:
+            raise ValueError("Already calibrating %s."
+                             % ("upper" if self.calibrate_upper
+                             else "lower"))
+
+    def stop_calibration(self):
+        if self.calibrating:
+            self.calibrating = False
+        else:
+            raise ValueError("Not currently calibrating.")
+
+    def close(self):
+        self.stream.stop_stream()
+        self.stream.close()
+        self.pa.terminate()
+
+if __name__ == '__main__':
+    talker = Talker()
+
+    print "low"
+    talker.start_calibration(3, False)
+    sleep(4)
+    print "hi"
+    talker.start_calibration(3, True)
+    sleep(4)
+    print talker.threshes
+    sleep(2)
+
+    print("Press ctrl-c to exit...")
+    
+    # Loop until interrupt
+    try:
+        while True:
+            pass
+    except KeyboardInterrupt:
+        talker.close()
+        print("Exiting...")
